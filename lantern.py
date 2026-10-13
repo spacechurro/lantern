@@ -5,20 +5,21 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-DEFAULTS = {"timeout": 5, "color": True}
+DEFAULTS = {"timeout": 5, "color": True, "interval": 30}
 CONFIG_NAME = "lantern.toml"
 
 
 def load_config(path: Path | None = None) -> dict:
     """Read the few keys Lantern understands from a TOML-shaped file.
 
-    The file only needs `key = value` lines. `timeout` is a number and
-    `color` is `true` or `false`. Blank lines, comments, and other keys
-    are ignored.
+    The file only needs `key = value` lines. `timeout` and `interval` are
+    numbers. `color` is `true` or `false`. Blank lines, comments, and other
+    keys are ignored.
     """
     path = path or Path(CONFIG_NAME)
     config = dict(DEFAULTS)
@@ -31,6 +32,8 @@ def load_config(path: Path | None = None) -> dict:
         key, value = (part.strip() for part in line.split("=", 1))
         if key == "timeout":
             config["timeout"] = float(value)
+        elif key == "interval":
+            config["interval"] = float(value)
         elif key == "color":
             config["color"] = value == "true"
     return config
@@ -81,6 +84,20 @@ def resolve_output(args: argparse.Namespace, config: dict) -> tuple[float, bool]
     return timeout, use_color
 
 
+def watch(url: str, timeout: float, interval: float, color: bool) -> int:
+    """Recheck a URL until the user presses Ctrl+C.
+
+    A down result does not stop the loop. Ctrl+C exits 0.
+    """
+    try:
+        while True:
+            ok, status = check(url, timeout)
+            print(format_result(ok, status, color), flush=True)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lantern",
@@ -89,6 +106,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     check_parser = sub.add_parser("check", help="check a URL once")
     add_output_flags(check_parser)
+    watch_parser = sub.add_parser("watch", help="recheck a URL until interrupted")
+    add_output_flags(watch_parser)
+    watch_parser.add_argument(
+        "--interval",
+        type=float,
+        help="seconds between checks (overrides lantern.toml)",
+    )
     return parser
 
 
@@ -96,6 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_config()
     timeout, use_color = resolve_output(args, config)
+    if args.command == "watch":
+        interval = config["interval"] if args.interval is None else args.interval
+        return watch(args.url, timeout, interval, use_color)
     ok, status = check(args.url, timeout)
     print(format_result(ok, status, use_color))
     return 0 if ok else 1
