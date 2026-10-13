@@ -1,0 +1,88 @@
+name: Sync docs
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  sync-docs:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout lantern
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require secrets
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          DOCS_REPO_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+        run: |
+          missing=0
+          if [ -z "$XAI_API_KEY" ]; then
+            echo "Missing secret XAI_API_KEY"
+            missing=1
+          fi
+          if [ -z "$DOCS_REPO_TOKEN" ]; then
+            echo "Missing secret DOCS_REPO_TOKEN"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "Add both secrets on this repository. See README.md."
+            exit 1
+          fi
+
+      - name: Checkout lantern-docs
+        uses: actions/checkout@v4
+        with:
+          repository: spacechurro/lantern-docs
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
+          path: lantern-docs
+          persist-credentials: false
+
+      - name: Install Grok Build
+        run: |
+          curl -fsSL https://x.ai/cli/install.sh | bash
+          echo "$HOME/.grok/bin" >> "$GITHUB_PATH"
+
+      - name: Collect the merged diff
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch origin "pull/${PR_NUMBER}/head"
+          git diff "${BASE_SHA}...FETCH_HEAD" > /tmp/merged.diff
+          if [ ! -s /tmp/merged.diff ]; then
+            echo "Merged diff is empty."
+            exit 1
+          fi
+
+      - name: Update the docs
+        working-directory: lantern-docs
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          GH_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+          GROK_DISABLE_AUTOUPDATER: "1"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          git config user.name "Sergio Rabiela"
+          git config user.email "sergiorabiela@gmail.com"
+          # The docs checkout does not store the token. git reads GH_TOKEN when it pushes.
+          git config credential.helper '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'
+          {
+            cat "$GITHUB_WORKSPACE/.github/prompts/sync-docs.md"
+            printf '\n\n## Merged pull request\n\n'
+            printf 'Number: %s\n' "$PR_NUMBER"
+            printf 'Title: %s\n' "$PR_TITLE"
+            printf 'URL: %s\n' "$PR_URL"
+            printf '\n## Diff\n\n'
+            cat /tmp/merged.diff
+          } > /tmp/prompt.md
+          grok --cwd "$PWD" --prompt-file /tmp/prompt.md --yolo --no-auto-update --max-turns 30
