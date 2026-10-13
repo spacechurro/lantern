@@ -31,6 +31,6 @@ The token GitHub gives this workflow can read this repo. It cannot open a pull r
 
 ### Try it
 
-[Add `lantern watch`](https://github.com/spacechurro/lantern/pull/1) changes what a user can run. Merge it after the secrets are set. Grok should open a docs pull request that describes `watch`.
+[EXAMPLE.md](EXAMPLE.md) is the walkthrough of the run that already happened: the merged code pull request, the workflow run, and the docs pull request Grok opened.
 
 Run the tests with `python3 -m unittest`.
